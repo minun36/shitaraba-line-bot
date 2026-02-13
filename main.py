@@ -63,27 +63,51 @@ def main():
         pass
 
     timestamp = datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')
-    mp3_filename = outdir / f"valorant_part{thread.get('part')}_{thread_id}_{timestamp}.mp3"
+    mp3_basename = outdir / f"valorant_part{thread.get('part')}_{thread_id}_{timestamp}.mp3"
 
     # 全レスをテキストに結合（段落区切り）
     full_text = '\n\n'.join(posts)
     print(f"\nMP3に変換中（{len(posts)}件のレス、{len(full_text)}文字）...")
-    success_convert, size = text_to_mp3(full_text, str(mp3_filename))
+    success_convert, size = text_to_mp3(full_text, str(mp3_basename))
 
     if not success_convert:
         print("⚠️ MP3変換に失敗しました")
         send_discord_message("⚠️ MP3変換に失敗しました", discord_token, discord_channel)
         return
 
-    # Discordにファイル添付で送信
-    message_caption = f"🎙️ {thread['name']} (全{len(posts)}件)"
-    print(f"\nDiscordにMP3ファイルを送信中...: {mp3_filename}")
-    success = send_discord_file(str(mp3_filename), discord_token, discord_channel, message=message_caption)
+    # 生成されたMP3ファイルを検索して Discord に送信
+    base_name = str(mp3_basename).rsplit('.', 1)[0]
+    mp3_files = sorted(outdir.glob(f"{Path(base_name).name}*.mp3"))
 
-    if success:
-        print("✓ Discord送信成功")
+    if not mp3_files:
+        print("⚠️ MP3ファイルが見つかりません")
+        send_discord_message("⚠️ MP3ファイルが見つかりません", discord_token, discord_channel)
+        return
+
+    print(f"\n✓ {len(mp3_files)} 個の MP3 ファイルを検出しました")
+
+    # 各MP3ファイルを Discord に送信
+    message_caption = f"🎙️ {thread['name']} (全{len(posts)}件)"
+    success_count = 0
+
+    for idx, mp3_file in enumerate(mp3_files, 1):
+        file_caption = message_caption
+        if len(mp3_files) > 1:
+            file_caption += f" - Part {idx}/{len(mp3_files)}"
+
+        print(f"\nDiscordにMP3ファイルを送信中 ({idx}/{len(mp3_files)}): {mp3_file.name}")
+        success = send_discord_file(str(mp3_file), discord_token, discord_channel, message=file_caption)
+
+        if success:
+            print(f"✓ 送信成功")
+            success_count += 1
+        else:
+            print(f"✗ 送信失敗")
+
+    if success_count == len(mp3_files):
+        print(f"\n✓ Discord送信成功 ({success_count}/{len(mp3_files)})")
     else:
-        print("✗ Discord送信失敗")
+        print(f"\n✗ 一部の送信に失敗 ({success_count}/{len(mp3_files)})")
 
     print("\n" + "=" * 60)
     print("処理完了")

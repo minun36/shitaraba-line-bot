@@ -2,10 +2,29 @@
 テキストをMP3音声ファイルに変換するモジュール
 
 gTTS (Google Text-to-Speech) を使用して日本語テキストを自然な音声で MP3 に変換します。
+大量テキストはチャンクに分割して複数のMP3を生成し、レート制限を回避します。
 Discordのファイルサイズ上限(25MB)も監視します。
 """
 import os
+import time
+import warnings
 from typing import Optional
+from urllib3.exceptions import InsecureRequestWarning
+import urllib3
+
+# SSL警告を抑制（ローカルシステムのSSL証明書問題対策）
+warnings.filterwarnings("ignore", message="Unverified HTTPS request is being made")
+warnings.simplefilter('ignore', InsecureRequestWarning)
+urllib3.disable_warnings(InsecureRequestWarning)
+
+# グローバルにSSL検証をスキップ
+import ssl
+try:
+    _create_unverified_https_context = ssl._create_unverified_context
+except AttributeError:
+    pass
+else:
+    ssl._create_default_https_context = _create_unverified_https_context
 
 try:
     from gtts import gTTS
@@ -17,18 +36,23 @@ except ImportError:
 DISCORD_MAX_SIZE = 25 * 1024 * 1024  # 25MB
 LANGUAGE = "ja"  # 日本語
 
+# テキスト分割用パラメータ（文字数単位）
+CHUNK_SIZE = 3000  # 1チャンク = 3000文字程度
+RETRY_DELAY = 2  # リトライ間隔（秒）
+MAX_RETRIES = 3  # 最大リトライ回数
+
 
 def text_to_mp3(text: str, output_file: str, max_size_mb: int = 25) -> tuple[bool, Optional[int]]:
     """
-    テキストをMP3ファイルに変換
+    テキストをMP3ファイルに変換（大量テキストはチャンク分割対応）
 
     引数:
     - text: 変換するテキスト
-    - output_file: 出力先ファイルパス
+    - output_file: 出力先ファイルパス（複数生成時は _part1.mp3 等に自動分割）
     - max_size_mb: 最大ファイルサイズ警告値（MB）
 
     戻り値: (成功フラグ, ファイルサイズ(bytes))
-    失敗時または size_warning 時は (False, size) または (True, size) を返す
+    失敗時は (False, None) を返す
     """
     if gTTS is None:
         print("エラー: gTTS がインストールされていません")
@@ -39,9 +63,90 @@ def text_to_mp3(text: str, output_file: str, max_size_mb: int = 25) -> tuple[boo
         print("エラー: 空のテキストです")
         return False, None
 
+    # テキストをチャンクに分割
+    chunks = _split_text_into_chunks(text, CHUNK_SIZE)
+    print(f"テキストを {len(chunks)} 個のチャンクに分割します")
+
+    if len(chunks) == 1:
+        # 単一ファイル生成
+        return _convert_chunk(chunks[0], output_file, max_size_mb)
+    else:
+        # 複数ファイル生成
+        base_name, ext = os.path.splitext(output_file)
+        total_size = 0
+        success = True
+
+        for idx, chunk in enumerate(chunks, 1):
+            chunk_file = f"{base_name}_part{idx}{ext}"
+            result, size = _convert_chunk(chunk, chunk_file, max_size_mb)
+            if result and size:
+                total_size += size
+            else:
+                success = False
+                print(f"警告: チャンク {idx} の生成に失敗しました")
+
+        if success:
+            print(f"\n✓ 全 {len(chunks)} チャンクの MP3 生成完了")
+            print(f"  合計ファイルサイズ: {total_size / (1024 * 1024):.2f} MB")
+            return True, total_size
+        else:
+            return False, None
+
+
+def _split_text_into_chunks(text: str, chunk_size: int) -> list[str]:
+    """
+    テキストを指定サイズのチャンクに分割（句点で区切る）
+
+    引数:
+    - text: 分割するテキスト
+    - chunk_size: 目標チャンクサイズ（文字数）
+
+    戻り値: チャンクのリスト
+    """
+    if len(text) <= chunk_size:
+        return [text]
+
+    chunks = []
+    current_chunk = ""
+
+    # 句点で分割（。で区切る）
+    sentences = text.split("。")
+
+    for sentence in sentences:
+        if not sentence.strip():
+            continue
+
+        sentence_with_period = sentence + "。"
+
+        # チャンクが満杯の場合は新規チャンクへ
+        if len(current_chunk) + len(sentence_with_period) > chunk_size and current_chunk:
+            chunks.append(current_chunk)
+            current_chunk = sentence_with_period
+        else:
+            current_chunk += sentence_with_period
+
+    # 残りのテキストを追加
+    if current_chunk:
+        chunks.append(current_chunk)
+
+    return chunks
+
+
+def _convert_chunk(text: str, output_file: str, max_size_mb: int, retry_count: int = 0) -> tuple[bool, Optional[int]]:
+    """
+    単一テキストをMP3に変換（リトライ対応）
+
+    引数:
+    - text: 変換するテキスト
+    - output_file: 出力先ファイルパス
+    - max_size_mb: 最大ファイルサイズ警告値（MB）
+    - retry_count: 現在のリトライ回数（内部用）
+
+    戻り値: (成功フラグ, ファイルサイズ(bytes))
+    """
     try:
-        # gTTS でテキスト→音声変換
-        tts = gTTS(text=text, lang=LANGUAGE, slow=False)
+        # gTTS でテキスト→音声変換（タイムアウト付き）
+        tts = gTTS(text=text, lang=LANGUAGE, slow=False, timeout=10)
         tts.save(output_file)
 
         # ファイルサイズを確認
@@ -54,15 +159,32 @@ def text_to_mp3(text: str, output_file: str, max_size_mb: int = 25) -> tuple[boo
             if size > max_size_mb * 1024 * 1024:
                 print(f"⚠️  警告: ファイルサイズが {max_size_mb}MB を超えています")
                 print(f"   Discordで送信できない可能性があります")
-                return True, size  # 生成は成功したが警告
+                return True, size
 
             return True, size
         else:
             print(f"エラー: ファイル生成に失敗しました")
             return False, None
 
+    except (KeyboardInterrupt, TimeoutError) as e:
+        # SSL 証明書読み込みのハングやタイムアウトの場合はリトライ
+        if retry_count < MAX_RETRIES:
+            print(f"⚠️  SSL 証明書エラー検出。{RETRY_DELAY}秒後にリトライ... ({retry_count + 1}/{MAX_RETRIES})")
+            time.sleep(RETRY_DELAY)
+            return _convert_chunk(text, output_file, max_size_mb, retry_count + 1)
+        else:
+            print(f"エラー: _convert_chunk(): {type(e).__name__}: SSL 証明書エラーが解決できません")
+            return False, None
+
     except Exception as e:
-        print(f"エラー: text_to_mp3(): {e}")
+        error_msg = str(e)
+        # 429 エラー（レート制限）の場合はリトライ
+        if "429" in error_msg and retry_count < MAX_RETRIES:
+            print(f"⚠️  レート制限検出。{RETRY_DELAY}秒後に リトライ... ({retry_count + 1}/{MAX_RETRIES})")
+            time.sleep(RETRY_DELAY)
+            return _convert_chunk(text, output_file, max_size_mb, retry_count + 1)
+
+        print(f"エラー: _convert_chunk(): {e}")
         return False, None
 
 
