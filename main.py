@@ -11,7 +11,10 @@
 """
 import os
 from shitaraba_extractor import get_latest_valorant_thread, extract_post_bodies
-from discord_sender import send_discord_message
+from discord_sender import send_discord_message, send_discord_file
+import os
+from datetime import datetime
+from pathlib import Path
 
 
 MAX_DISCORD_MESSAGE = 1900
@@ -64,7 +67,7 @@ def main():
     print(f"✓ 対象スレッド: {thread['name']}")
 
     print("\nレスを取得中...")
-    posts = extract_post_bodies(thread['url'])
+    posts = extract_post_bodies(thread['url'], expected_posts=thread.get('posts'))
     if not posts:
         print("⚠️ レスの取得に失敗しました")
         send_discord_message("⚠️ レスの取得に失敗しました", discord_token, discord_channel)
@@ -72,10 +75,34 @@ def main():
 
     print(f"✓ {len(posts)}件のレスを取得")
 
-    message = build_message(thread, posts)
+    # 全レスをテキストファイルに出力
+    outdir = Path('outputs')
+    outdir.mkdir(exist_ok=True)
 
-    print("\nDiscordに送信中...")
-    success = send_discord_message(message, discord_token, discord_channel)
+    # スレッドIDをURLから抽出
+    thread_id = 'unknown'
+    try:
+        m = __import__('re').search(r'/bbs/read\.cgi/[^/]+/(\d+)/', thread['url'])
+        if m:
+            thread_id = m.group(1)
+    except Exception:
+        pass
+
+    timestamp = datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')
+    filename = outdir / f"valorant_part{thread.get('part')}_{thread_id}_{timestamp}.txt"
+    try:
+        with filename.open('w', encoding='utf-8') as f:
+            f.write(f"{thread['name']}\n")
+            f.write('\n')
+            f.write('\n\n'.join(posts))
+        print(f"✓ テキストファイル出力: {filename}")
+    except Exception as e:
+        print(f"✗ ファイル出力失敗: {e}")
+
+    # Discordには生成したテキストファイルを添付して送信（これが唯一の出力）
+    message_caption = f"📄 {thread['name']} (全{len(posts)}件)"
+    print(f"\nDiscordにファイル添付を送信中...: {filename}")
+    success = send_discord_file(str(filename), discord_token, discord_channel, message=message_caption)
 
     if success:
         print("✓ Discord送信成功")

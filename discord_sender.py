@@ -64,5 +64,60 @@ def send_discord_message(message: str, token: str, channel_id: str) -> bool:
         return False
 
 
+def send_discord_file(file_path: str, token: str, channel_id: str, message: str | None = None) -> bool:
+    """
+    指定したファイルをDiscordチャンネルに添付して送信する
+
+    引数:
+    - file_path: 送信するファイルのパス
+    - token: Bot トークン（環境変数から取得）
+    - channel_id: 送信先チャンネルID
+    - message: 添付に添えるテキスト（省略可）
+
+    戻り値: 成功時 True, 失敗時 False
+
+    実装:
+    - multipart/form-data の `files` フィールドにファイルを入れて POST
+    - rate limit (429) の場合はレスポンスの `retry_after` を参照して1回リトライ
+    """
+    url = f"{API_BASE}/channels/{channel_id}/messages"
+    headers = {
+        'Authorization': f'Bot {token}'
+    }
+
+    try:
+        with open(file_path, 'rb') as fp:
+            files = {'file': (file_path.split('/')[-1], fp)}
+            data = {}
+            if message:
+                data['content'] = message
+            resp = requests.post(url, headers=headers, files=files, data=data, timeout=30)
+
+        if resp.status_code in (200, 201):
+            return True
+        if resp.status_code == 429:
+            try:
+                info = resp.json()
+                wait = float(info.get('retry_after', 1.0))
+            except Exception:
+                wait = 1.0
+            import time
+            time.sleep(wait)
+            with open(file_path, 'rb') as fp:
+                files = {'file': (file_path.split('/')[-1], fp)}
+                resp2 = requests.post(url, headers=headers, files=files, data=data, timeout=30)
+            if resp2.status_code in (200, 201):
+                return True
+            print(f"Discordファイル送信失敗: status={resp2.status_code}, body={resp2.text}")
+            return False
+
+        print(f"Discordファイル送信失敗: status={resp.status_code}, body={resp.text}")
+        return False
+
+    except Exception as e:
+        print(f"エラー: send_discord_file(): {e}")
+        return False
+
+
 if __name__ == '__main__':
     print('このモジュールは直接実行せず、他から呼び出してください。')

@@ -66,7 +66,26 @@ def get_latest_valorant_thread() -> Optional[Dict]:
         return None
 
 
-def extract_post_bodies(thread_url: str) -> List[str]:
+def _normalize_thread_url(thread_url: str) -> str:
+    """スレッドURLを正規化して、余分なページ指定や末尾の数字を取り除く
+
+    例: https://.../read.cgi/netgame/16797/1748243747/50 -> https://.../read.cgi/netgame/16797/1748243747/
+    """
+    if not thread_url:
+        return thread_url
+    # remove query
+    url = thread_url.split('?', 1)[0]
+    # ensure trailing slash
+    if not url.endswith('/'):
+        url = url + '/'
+    # remove trailing page numbers after thread id, e.g. /.../1748243747/50 -> keep up to thread id
+    m = re.match(r'(.*/bbs/read\.cgi/[^/]+/\d+/)(?:\d+/)?', url)
+    if m:
+        return m.group(1)
+    return url
+
+
+def extract_post_bodies(thread_url: str, expected_posts: Optional[int] = None) -> List[str]:
     """
     スレッドURLから<dd>タグの本文を抽出してクリーンして返す
 
@@ -74,16 +93,37 @@ def extract_post_bodies(thread_url: str) -> List[str]:
     失敗時は空リストを返す
     """
     try:
-        resp = requests.get(thread_url, timeout=10)
-        resp.encoding = 'EUC-JP'
-        soup = BeautifulSoup(resp.text, 'html.parser')
+        url_candidates = []
+        # normalized base url
+        base = _normalize_thread_url(thread_url)
+        url_candidates.append(base)
+        # 一部ページでは '?mode=all' 等で全件表示できる場合がある
+        url_candidates.append(base + '?mode=all')
+        url_candidates.append(base + 'index.html')
 
         posts: List[str] = []
-        for dd in soup.find_all('dd'):
-            text = dd.get_text(separator=' ')
-            cleaned = clean_text(text)
-            if cleaned:
-                posts.append(cleaned)
+        for url in url_candidates:
+            try:
+                resp = requests.get(url, timeout=10)
+                resp.encoding = 'EUC-JP'
+                soup = BeautifulSoup(resp.text, 'html.parser')
+                found = []
+                for dd in soup.find_all('dd'):
+                    text = dd.get_text(separator=' ')
+                    cleaned = clean_text(text)
+                    if cleaned:
+                        found.append(cleaned)
+
+                # 見つかった件数が期待値に近い、または十分に多ければ採用
+                if expected_posts and len(found) >= min(50, expected_posts):
+                    posts = found
+                    break
+                # 期待値が与えられていない場合は最も多く見つかったものを採用
+                if not expected_posts and len(found) > len(posts):
+                    posts = found
+            except Exception as inner_e:
+                print(f"警告: extract_post_bodies() 内の候補URL取得失敗 {url}: {inner_e}")
+                continue
 
         return posts
 
