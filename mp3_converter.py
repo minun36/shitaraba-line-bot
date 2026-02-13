@@ -37,9 +37,9 @@ DISCORD_MAX_SIZE = 25 * 1024 * 1024  # 25MB
 LANGUAGE = "ja"  # 日本語
 
 # テキスト分割用パラメータ（文字数単位）
-CHUNK_SIZE = 3000  # 1チャンク = 3000文字程度
-RETRY_DELAY = 2  # リトライ間隔（秒）
-MAX_RETRIES = 3  # 最大リトライ回数
+CHUNK_SIZE = 2500  # 1チャンク = 2500文字程度に縮小（SSL問題回避）
+RETRY_DELAY = 3    # リトライ間隔（秒）
+MAX_RETRIES = 5    # 最大リトライ回数を増加
 
 
 def text_to_mp3(text: str, output_file: str, max_size_mb: int = 25) -> tuple[bool, Optional[int]]:
@@ -145,8 +145,8 @@ def _convert_chunk(text: str, output_file: str, max_size_mb: int, retry_count: i
     戻り値: (成功フラグ, ファイルサイズ(bytes))
     """
     try:
-        # gTTS でテキスト→音声変換（タイムアウト付き）
-        tts = gTTS(text=text, lang=LANGUAGE, slow=False, timeout=10)
+        # gTTS でテキスト→音声変換（短いタイムアウト）
+        tts = gTTS(text=text, lang=LANGUAGE, slow=False, timeout=8)
         tts.save(output_file)
 
         # ファイルサイズを確認
