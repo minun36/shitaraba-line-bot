@@ -69,17 +69,22 @@ def get_latest_valorant_thread() -> Optional[Dict]:
 def _normalize_thread_url(thread_url: str) -> str:
     """スレッドURLを正規化して、余分なページ指定や末尾の数字を取り除く
 
-    例: https://.../read.cgi/netgame/16797/1748243747/50 -> https://.../read.cgi/netgame/16797/1748243747/
+    例:
+    - https://.../read.cgi/netgame/16797/1748243747/l50 -> https://.../read.cgi/netgame/16797/1748243747/
+    - https://.../read.cgi/netgame/16797/1748243747/50 -> https://.../read.cgi/netgame/16797/1748243747/
     """
     if not thread_url:
         return thread_url
     # remove query
     url = thread_url.split('?', 1)[0]
+    # Remove pagination patterns: /l50, /50, /l100, /100 etc.
+    # Pattern: /(l?\d+)/?$ at the end
+    url = re.sub(r'/l?\d+/?$', '', url)
     # ensure trailing slash
     if not url.endswith('/'):
         url = url + '/'
-    # remove trailing page numbers after thread id, e.g. /.../1748243747/50 -> keep up to thread id
-    m = re.match(r'(.*/bbs/read\.cgi/[^/]+/\d+/)(?:\d+/)?', url)
+    # extract just the thread id part (netgame/16797/thread_id/)
+    m = re.match(r'(.*/bbs/read\.cgi/[^/]+/\d+/\d+/)', url)
     if m:
         return m.group(1)
     return url
@@ -100,6 +105,9 @@ def extract_post_bodies(thread_url: str, expected_posts: Optional[int] = None) -
         # 一部ページでは '?mode=all' 等で全件表示できる場合がある
         url_candidates.append(base + '?mode=all')
         url_candidates.append(base + 'index.html')
+        # l50 パターンで制限表示されるため、mode=all が効かない場合 /l1000 等で全件取得を試みる
+        url_candidates.append(base + 'l1000')
+        url_candidates.append(base + 'l5000')
 
         posts: List[str] = []
         for url in url_candidates:
@@ -125,6 +133,8 @@ def extract_post_bodies(thread_url: str, expected_posts: Optional[int] = None) -
                 print(f"警告: extract_post_bodies() 内の候補URL取得失敗 {url}: {inner_e}")
                 continue
 
+        if not posts:
+            print(f"警告: どのURLからもレスが取得できませんでした")
         return posts
 
     except Exception as e:
