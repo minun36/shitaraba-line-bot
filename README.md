@@ -1,60 +1,64 @@
-# したらば掲示板→LINE自動送信システム
+# したらば掲示板→Discord自動送信システム
 
-毎日夜12時に、したらばVALORANT 2代目掲示板から最新スレッドを取得してLINEに通知します。
+毎日夜12時に、したらばVALORANT 2代目掲示板から最新スレッドを取得して指定したDiscordサーバーのチャンネルに通知します。
 
 ## 機能
 
 - したらば掲示板から「VALORANT part～～～～」スレッドを自動取得
 - レス数300以上の最新スレッドを選択
-- 最初の20レスをLINEで通知
+- 最初の20レスをDiscordに通知
 - GitHub Actionsで完全自動実行（サーバー不要）
 
 ## セットアップ
 
-### 1. LINE Notify トークンを GitHub Secrets に登録
+### 1. Discord Bot トークン と チャンネルID を GitHub Secrets に登録
 
 1. GitHubリポジトリの **Settings** → **Secrets and variables** → **Actions**
 2. **New repository secret** をクリック
-3. Name: `LINE_NOTIFY_TOKEN`
-4. Secret: あなたのLINE Notifyトークン
+3. Name: `DISCORD_BOT_TOKEN`（値: Bot トークン）
+4. Name: `DISCORD_CHANNEL_ID`（値: 送信先チャンネルID）
 5. **Add secret** をクリック
 
-### 2. 動作確認（手動実行）
+※ トークンやチャンネルIDはリポジトリに直接置かず環境変数/Secretsのみで管理してください。
 
-1. **Actions** タブを開く
-2. 左側のワークフロー名をクリック
-3. **Run workflow** → **Run workflow** で実行
-4. 数分後、LINEに通知が届けばOK！
+### 2. ローカルでの動作確認
 
-## 自動実行スケジュール
+ローカルで実行する場合は環境変数を設定してから実行してください。
 
-- **毎日 00:00 JST（夜12時）** に自動実行
+Windows (PowerShell):
+```powershell
+$env:DISCORD_BOT_TOKEN = "あなたのボットトークン"
+$env:DISCORD_CHANNEL_ID = "送信先チャンネルID"
+python main.py
+```
+
+Linux / macOS:
+```bash
+export DISCORD_BOT_TOKEN="あなたのボットトークン"
+export DISCORD_CHANNEL_ID="送信先チャンネルID"
+python main.py
+```
+
+### 3. GitHub Actions での自動実行
+
+`.github/workflows/daily_scrape.yml` が毎日 00:00 JST に実行する設定になっています。手動実行も可能です。
 
 ## カスタマイズ
 
 ### 送信するレス数を変更
 
-`main.py` の以下の部分を編集:
-
-```python
-preview_posts = posts[:20]  # ← 20を任意の数に変更
-```
+`main.py` の `posts[:20]` 部分を編集して表示件数を変更できます。
 
 ### 実行時刻を変更
 
-`.github/workflows/daily_scrape.yml` の以下の部分を編集:
-
-```yaml
-cron: '0 15 * * *'  # 15:00 UTC = 00:00 JST
-```
-
-例: 朝9時に変更 → `cron: '0 0 * * *'`（00:00 UTC = 09:00 JST）
+`.github/workflows/daily_scrape.yml` の `cron` を編集してください（UTC表記）。
 
 ## トラブルシューティング
 
-### LINEに通知が来ない
+### Discord に通知が来ない
 
-- GitHub Secrets に `LINE_NOTIFY_TOKEN` が正しく設定されているか確認
+- GitHub Secrets に `DISCORD_BOT_TOKEN` と `DISCORD_CHANNEL_ID` が正しく設定されているか確認
+- Bot に該当チャンネルへの送信権限（Send Messages）があるか確認
 - Actions タブでエラーログを確認
 
 ### スレッドが見つからない
@@ -62,19 +66,11 @@ cron: '0 15 * * *'  # 15:00 UTC = 00:00 JST
 - スレッド名のパターンを確認
 - レス数の条件（300以上）を確認
 
-## ローカルでのテスト方法
+## 依存関係
 
-```bash
-# 依存ライブラリをインストール
-pip install -r requirements.txt
-
-# 環境変数を設定
-export LINE_NOTIFY_TOKEN="あなたのLINE Notifyトークン"
-
-# スクリプトを実行
-python main.py
-```
+依存は `requirements.txt` を参照してください（`requests`, `beautifulsoup4`）。
 
 ## ライセンス
 
 MIT License
+
