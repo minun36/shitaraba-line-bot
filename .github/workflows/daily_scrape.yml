@@ -35,4 +35,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: shitaraba-outputs
-          path: outputs/*.txt
+          path: outputs/*.mp3
